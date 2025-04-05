@@ -1,12 +1,12 @@
 # 📦 Descompresor Web Simple ✨
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![Demo](https://img.shields.io/badge/Demo-Live!-brightgreen)](https://soyunomas.github.io/simple-web-unarchiver/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![Demo](https://img.shields.io/badge/Demo-Live!-brightgreen)](https://soyunomas.github.io/simple-web-unarchiver/index.html)
 
 Una aplicación web simple, del lado del cliente, para extraer archivos de formatos ZIP, TAR y GZ directamente en tu navegador. No se necesita procesamiento en el servidor para estos formatos. Construido con HTML5, Bootstrap 5 y JavaScript Vanilla.
 
 ---
 
-🚀 **Demo:** [**¡Pruébalo en vivo!**](https://soyunomas.github.io/simple-web-unarchiver/)
+🚀 **Demo:** [**¡Pruébalo en vivo!**](https://soyunomas.github.io/simple-web-unarchiver/index.html)
 
 ---
 
