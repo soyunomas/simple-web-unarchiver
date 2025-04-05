@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Descompresor Online (ZIP, TAR, GZ)</title>
+    <!-- Bootstrap 5 CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
+    <!-- JSZip -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" integrity="sha512-XMVd28F1oH/O71fzwBnV7HucLxVwtxf26XV8P4wPk26EDxuGZ91N8bsOttmnomcCD3CS5ZMRL50H0GgOHvegtg==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <!-- Pako (para Gzip) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js" integrity="sha512-g2TeAWw5GPnX7z0Kn8nFbYfeHcvAu/tx6d6mrLe/90mkCxO+RcptyYpksUz35EO337F83bZwcmUyHiHamspkfg==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+
+    <style>
+        /* Estilos CSS Embebidos */
+        #drop-zone {
+            border: 2px dashed #ccc;
+            padding: 50px;
+            cursor: pointer;
+            transition: background-color 0.2s ease-in-out, border-color 0.2s ease-in-out;
+        }
+        #drop-zone.dragover {
+            background-color: #e9ecef;
+            border-color: #0d6efd;
+        }
+        #file-input {
+            display: none; /* Ocultar input file real */
+        }
+        .list-group-item span {
+            word-break: break-all; /* Evitar que nombres largos rompan layout */
+        }
+         #output-list-container { /* Renombrado de #output para evitar confusión con variable JS */
+             max-height: 400px; /* Limitar altura */
+             overflow-y: auto; /* Scroll */
+         }
+    </style>
+</head>
+<body>
+    <div class="container mt-5">
+        <h1 class="mb-4 text-center">Descompresor de Archivos Online</h1>
+        <p class="text-center text-muted mb-4">Soporta: .zip, .tar, .tar.gz, .tgz, .gz (No soporta: .rar, .7z, .bz2)</p>
+
+        <div id="drop-zone" class="text-center mb-4">
+            <p>Arrastra y suelta un archivo (.zip, .tar, .gz) aquí</p>
+            <p>o</p>
+            <button type="button" class="btn btn-primary" id="browse-btn">Selecciona un archivo</button>
+            <input type="file" id="file-input" accept=".zip,.tar,.tar.gz,.tgz,.gz,application/zip,application/x-tar,application/gzip,application/x-gzip">
+        </div>
+
+        <div id="status" class="alert alert-info" role="alert">
+            Esperando archivo...
+        </div>
+
+        <div id="output-list-container">
+            <h3 class="mt-4 mb-3">Archivos contenidos:</h3>
+            <ul id="file-list" class="list-group">
+                <li class="list-group-item text-muted">Ningún archivo cargado todavía.</li>
+            </ul>
+        </div>
+
+    </div>
+
+    <!-- Bootstrap 5 JS Bundle -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" crossorigin="anonymous"></script>
+
+    <!-- JavaScript Embebido -->
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            // --- Selectores DOM ---
+            const dropZone = document.getElementById('drop-zone');
+            const fileInput = document.getElementById('file-input');
+            const browseBtn = document.getElementById('browse-btn');
+            const statusDiv = document.getElementById('status');
+            const fileListUl = document.getElementById('file-list');
+            // const outputDiv = document.getElementById('output-list-container'); // Opcional si se necesita manipular el contenedor
+
+            // --- Almacenamiento de datos ---
+            let processedFileData = null; // Puede ser JSZip instance o { type: 'tar'/'single_file', ... }
+
+            // --- Funciones de Utilidad ---
+             function updateStatus(message, type = 'info') {
+                statusDiv.textContent = message;
+                statusDiv.className = `alert alert-${type} mt-3`;
+                console.log(`Status [${type}]: ${message}`);
+             }
+             function clearFileList() {
+                fileListUl.innerHTML = '<li class="list-group-item text-muted">Ningún archivo cargado todavía.</li>';
+                processedFileData = null;
+             }
+             function showProcessing(fileName) {
+                updateStatus(`Procesando archivo "${fileName}"...`, 'info');
+                fileListUl.innerHTML = '<li class="list-group-item text-center"><div class="spinner-border spinner-border-sm" role="status"><span class="visually-hidden">Loading...</span></div> Procesando...</li>';
+             }
+             function formatBytes(bytes, decimals = 2) {
+                 if (bytes === 0 || !bytes) return '0 Bytes'; const k = 1024; const dm = decimals < 0 ? 0 : decimals; const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB']; const i = Math.max(0, Math.floor(Math.log(bytes) / Math.log(k))); const index = Math.min(i, sizes.length - 1); return parseFloat((bytes / Math.pow(k, index)).toFixed(dm)) + ' ' + sizes[index];
+             }
+
+            // --- Manejadores de Eventos Drop Zone y Input ---
+             dropZone.addEventListener('dragover', (event) => { event.preventDefault(); dropZone.classList.add('dragover'); });
+             dropZone.addEventListener('dragleave', (event) => { event.preventDefault(); dropZone.classList.remove('dragover'); });
+             dropZone.addEventListener('drop', (event) => { event.preventDefault(); dropZone.classList.remove('dragover'); const files = event.dataTransfer.files; if (files.length > 0) { handleFile(files[0]); } });
+             browseBtn.addEventListener('click', () => fileInput.click());
+             dropZone.addEventListener('click', (e) => { if (e.target !== browseBtn && e.target !== fileInput) { fileInput.click(); } }); // Evitar doble trigger
+             fileInput.addEventListener('change', (event) => { const files = event.target.files; if (files.length > 0) { handleFile(files[0]); } event.target.value = null; }); // Resetear
+
+            // --- Lógica Principal (Async por FileReader y JSZip) ---
+            async function handleFile(file) {
+                if (!file) { updateStatus('No se seleccionó ningún archivo.', 'warning'); return; }
+                const fileName = file.name; let fileType = 'unknown'; const lowerFileName = fileName.toLowerCase();
+                if (lowerFileName.endsWith('.zip')) fileType = 'zip'; else if (lowerFileName.endsWith('.tar.gz') || lowerFileName.endsWith('.tgz')) fileType = 'tar.gz'; else if (lowerFileName.endsWith('.tar')) fileType = 'tar'; else if (lowerFileName.endsWith('.gz')) fileType = 'gz';
+
+                // Verificar librerías necesarias ANTES de leer
+                if (fileType === 'zip' && typeof JSZip === 'undefined') { updateStatus('Error: Librería JSZip no cargada.', 'danger'); return; }
+                if ((fileType === 'tar.gz' || fileType === 'gz') && typeof pako === 'undefined') { updateStatus('Error: Librería Pako (Gzip) no cargada.', 'danger'); return; }
+                if (fileType === 'unknown') { updateStatus(`Error: Formato no soportado (${fileName}). Use .zip, .tar, .gz.`, 'danger'); return; }
+
+                clearFileList(); showProcessing(fileName); const reader = new FileReader();
+                const arrayBuffer = await new Promise((resolve, reject) => { reader.onload = (e) => resolve(e.target.result); reader.onerror = (e) => { console.error("Error lectura:", e.target.error); updateStatus(`Error lectura: ${e.target.error}`, 'danger'); clearFileList(); reject(e.target.error); }; reader.readAsArrayBuffer(file); }).catch(err => null);
+                if (!arrayBuffer) return;
+
+                try {
+                    switch (fileType) {
+                        case 'zip': await processZip(arrayBuffer, fileName); break; // Async
+                        case 'tar.gz': await processTarGz(arrayBuffer, fileName); break; // Async por processTar
+                        case 'tar': await processTar(arrayBuffer, fileName); break; // Async
+                        case 'gz': await processGz(arrayBuffer, fileName); break; // Async
+                    }
+                } catch (error) { console.error("Error procesamiento:", error); let msg = error.message || 'Error desconocido'; if (error.cause) msg += ` (Causa: ${error.cause})`; updateStatus(`Error al procesar "${fileName}": ${msg}`, 'danger'); clearFileList(); }
+            }
+
+            // --- Procesadores específicos ---
+            async function processZip(arrayBuffer, fileName) {
+                try {
+                     const zip = await JSZip.loadAsync(arrayBuffer); processedFileData = zip; const files = [];
+                     zip.forEach((_, zipEntry) => { if (!zipEntry.dir) files.push({ name: zipEntry.name, type: 'zip', entry: zipEntry, size: zipEntry._data?.uncompressedSize ?? 0 }); });
+                     updateStatus(`Archivo ZIP "${fileName}" procesado.`, 'success'); displayFiles(files);
+                } catch (error) { console.error("Error leer ZIP:", error); updateStatus(`Error procesar ZIP "${fileName}": ${error.message}`, 'danger'); clearFileList(); }
+            }
+
+            async function processTarGz(arrayBuffer, fileName) {
+                try {
+                    updateStatus(`Descomprimiendo Gzip para "${fileName}"...`, 'info');
+                    const tarUint8Array = pako.inflate(new Uint8Array(arrayBuffer)); // pako es sync
+                    const tarBuffer = tarUint8Array.slice().buffer; // Obtener ArrayBuffer exacto
+                    updateStatus(`Gzip descomprimido. Procesando TAR...`, 'info');
+                    const tarFileName = fileName.replace(/(\.tar\.gz|\.tgz)$/i, '.tar');
+                    await processTar(tarBuffer, tarFileName); // Llamar a processTar (async)
+                } catch (error) { console.error("Error descomprimir/procesar Gzip/TAR:", error); updateStatus(`Error en "${fileName}": ${error.message}`, 'danger'); clearFileList(); }
+            }
+
+            async function processTar(arrayBuffer, fileName) {
+                 try {
+                    const tarFiles = parseTarBuffer(arrayBuffer); // parseTarBuffer es sync
+                     if (!tarFiles) { throw new Error("Fallo al parsear estructura TAR."); }
+                     const validFiles = tarFiles.filter(f => f && f.name && typeof f.dataOffset === 'number' && typeof f.size === 'number');
+                    processedFileData = { type: 'tar', buffer: arrayBuffer, files: validFiles };
+                    updateStatus(`Archivo TAR "${fileName}" procesado.`, 'success');
+                    displayFiles(validFiles.map(f => ({ ...f, type: 'tar' })));
+                 } catch(error) { console.error("Error parsear TAR:", error); const detailedError = error instanceof TypeError ? error.message : `Error interno del parser TAR.`; updateStatus(`Error al parsear TAR "${fileName}": ${detailedError}`, 'danger'); clearFileList(); }
+             }
+
+             async function processGz(arrayBuffer, fileName) {
+                  try {
+                      updateStatus(`Descomprimiendo Gzip para "${fileName}"...`, 'info');
+                      const decompressedUint8Array = pako.inflate(new Uint8Array(arrayBuffer)); // sync
+                      const decompressedBuffer = decompressedUint8Array.buffer.slice(0, decompressedUint8Array.byteLength); // Obtener ArrayBuffer exacto
+                      const originalName = fileName.replace(/\.gz$/i, '');
+                      processedFileData = { type: 'single_file', name: originalName, buffer: decompressedBuffer };
+                      updateStatus(`Archivo Gzip "${fileName}" descomprimido.`, 'success');
+                      displayFiles([{ name: originalName, type: 'single_gz', size: decompressedBuffer.byteLength }]);
+                  } catch (error) { console.error("Error descomprimir Gzip standalone:", error); updateStatus(`Error descomprimir Gzip "${fileName}": ${error.message}`, 'danger'); clearFileList(); }
+              }
+
+            // --- Parser Básico de TAR (SÍNCRONO) ---
+            function parseTarBuffer(arrayBuffer) {
+                 if (!(arrayBuffer instanceof ArrayBuffer)) { console.error("parseTarBuffer recibió tipo inesperado:", typeof arrayBuffer, arrayBuffer); throw new TypeError(`Entrada inválida para parseTarBuffer: se esperaba ArrayBuffer, se recibió ${typeof arrayBuffer}.`); }
+                const files = []; let offset = 0; let dataView; try { dataView = new DataView(arrayBuffer); } catch (e) { console.error("Error crear DataView:", e); throw new TypeError(`No se pudo crear DataView: ${e.message}`); } const textDecoder = new TextDecoder('utf-8');
+                while (offset + 512 <= arrayBuffer.byteLength) {
+                    const headerBuffer = arrayBuffer.slice(offset, offset + 512); const headerArray = new Uint8Array(headerBuffer);
+                    const isCurrentBlockZero = headerArray.every(byte => byte === 0);
+                    if (isCurrentBlockZero) { const nextOffset = offset + 512; if (nextOffset + 512 <= arrayBuffer.byteLength) { const nextHeaderBuffer = arrayBuffer.slice(nextOffset, nextOffset + 512); const isNextBlockZero = new Uint8Array(nextHeaderBuffer).every(byte => byte === 0); if (isNextBlockZero) { console.log("Dos bloques ceros -> Fin TAR."); break; } else { console.warn("Bloque ceros seguido por datos no nulos. Continuando..."); } } else { console.log("Bloque final ceros."); break; } }
+                    const nameBytes = headerArray.subarray(0, 100); const nameNullIndex = nameBytes.indexOf(0); const fileName = textDecoder.decode(nameBytes.subarray(0, nameNullIndex > -1 ? nameNullIndex : 100)).trim();
+                    const sizeBytes = headerArray.subarray(124, 136); const sizeOctal = textDecoder.decode(sizeBytes.subarray(0, sizeBytes.indexOf(0) > -1 ? sizeBytes.indexOf(0) : 12)).trim(); let fileSize = 0; try { fileSize = parseInt(sizeOctal, 8); if (isNaN(fileSize) || fileSize < 0) fileSize = 0; } catch (e) { fileSize = 0; }
+                    const typeflag = textDecoder.decode(headerArray.subarray(156, 157)); const dataOffset = offset + 512; const dataBlocksSize = Math.ceil(fileSize / 512) * 512; if (dataBlocksSize < 0) { console.error(`Tamaño bloque negativo (${dataBlocksSize}) para ${fileName}.`); return null; }
+                    if (dataOffset + fileSize > arrayBuffer.byteLength) { console.warn(`Archivo TAR '${fileName}' (tamaño ${fileSize}) excede buffer (${arrayBuffer.byteLength - dataOffset} bytes desde ${dataOffset}). TAR corrupto?`); break; }
+                    if (fileName && (typeflag === '0' || typeflag === '\0' || typeflag === '')) { files.push({ name: fileName, size: fileSize, dataOffset: dataOffset }); } else if (fileName) { const typeDesc = { '1': 'Link', '2': 'SymLink', '3': 'CharSpecial', '4': 'BlockSpecial', '5': 'Dir', '6': 'FIFO' }[typeflag] || `Tipo ${typeflag}`; console.log(`Elemento TAR ignorado: ${fileName}, ${typeDesc}`); }
+                    offset = dataOffset + dataBlocksSize; if (offset > arrayBuffer.byteLength + 512) { console.error("Offset excede límite seguridad."); return null; }
+                }
+                console.log(`Parseo TAR finalizado. ${files.length} archivos encontrados.`); return files;
+            }
+
+            // --- Visualización y Descarga ---
+            function displayFiles(files) {
+                fileListUl.innerHTML = ''; if (!files || files.length === 0) { fileListUl.innerHTML = '<li class="list-group-item text-muted">Archivo vacío o sin contenido reconocido.</li>'; return; }
+                files.forEach(fileInfo => {
+                    if (!fileInfo || typeof fileInfo.name === 'undefined') { console.warn("Entrada inválida:", fileInfo); return; }
+                    const li = document.createElement('li'); li.className = 'list-group-item d-flex justify-content-between align-items-center flex-wrap';
+                    const fileNameSpan = document.createElement('span'); fileNameSpan.textContent = fileInfo.name; fileNameSpan.title = fileInfo.name + (typeof fileInfo.size === 'number' ? ` (${formatBytes(fileInfo.size)})` : ''); li.appendChild(fileNameSpan);
+                    const downloadBtn = document.createElement('button'); downloadBtn.className = 'btn btn-sm btn-success download-btn ms-2 mt-1 mt-md-0'; downloadBtn.textContent = 'Descargar'; downloadBtn.setAttribute('data-filename', fileInfo.name); downloadBtn.setAttribute('data-filetype', fileInfo.type);
+                    downloadBtn.addEventListener('click', (e) => { e.stopPropagation(); const filename = e.target.getAttribute('data-filename'); const filetype = e.target.getAttribute('data-filetype'); downloadFile(filename, filetype); });
+                    li.appendChild(downloadBtn); fileListUl.appendChild(li);
+                });
+            }
+
+            // Async por JSZip
+            async function downloadFile(filename, filetype) {
+                updateStatus(`Preparando descarga de "${filename}"...`, 'info');
+                try {
+                    let blob = null;
+                    if (filetype === 'zip' && processedFileData instanceof JSZip) {
+                        const zipEntry = processedFileData.file(filename);
+                        if (zipEntry) blob = await zipEntry.async('blob'); else throw new Error(`Archivo "${filename}" no encontrado en ZIP.`);
+                    } else if (filetype === 'tar' && processedFileData?.type === 'tar') {
+                         const fileInfo = processedFileData.files.find(f => f.name === filename);
+                         if (fileInfo && typeof fileInfo.dataOffset === 'number' && typeof fileInfo.size === 'number' && processedFileData.buffer instanceof ArrayBuffer) {
+                             const fileData = processedFileData.buffer.slice(fileInfo.dataOffset, fileInfo.dataOffset + fileInfo.size);
+                             blob = new Blob([fileData]);
+                         } else throw new Error(`Info/buffer inválido para TAR "${filename}".`);
+                    } else if (filetype === 'single_gz' && processedFileData?.type === 'single_file') { // Solo GZ standalone
+                        if (processedFileData.name === filename && processedFileData.buffer instanceof ArrayBuffer) {
+                            blob = new Blob([processedFileData.buffer]);
+                        } else throw new Error(`Nombre/buffer inválido para ${filetype}: "${filename}".`);
+                    } else {
+                         throw new Error(`Tipo archivo (${filetype})/datos no válidos.`);
+                    }
+
+                    if (blob) triggerDownload(blob, filename);
+                    else throw new Error("No se pudo generar blob para descarga.");
+                } catch (error) { console.error("Error preparando/generando descarga:", error); updateStatus(`Error preparando descarga para "${filename}": ${error.message}`, 'danger'); }
+            }
+
+            // Síncrono
+            function triggerDownload(blob, filename) {
+                let a = null; let url = null; // Definir fuera del try para limpiar en catch
+                try {
+                    const cleanFilename = filename.includes('/') ? filename.substring(filename.lastIndexOf('/') + 1) : filename;
+                    url = URL.createObjectURL(blob);
+                    a = document.createElement('a');
+                    a.href = url;
+                    a.download = cleanFilename || 'descarga';
+                    document.body.appendChild(a); a.click();
+                    setTimeout(() => { if(a.parentNode) document.body.removeChild(a); URL.revokeObjectURL(url); console.log(`URL revocado: ${cleanFilename}`); }, 100);
+                    updateStatus(`"${a.download}" descargado.`, 'success');
+                } catch (error) {
+                    console.error("Error en triggerDownload:", error); updateStatus(`Error al iniciar descarga: ${error.message}`, 'danger');
+                    // Limpieza robusta en caso de error
+                    if (a?.parentNode) document.body.removeChild(a);
+                    if (url) URL.revokeObjectURL(url);
+                }
+            }
+
+            // Estado inicial
+             updateStatus("Esperando archivo...", 'info');
+
+        }); // Fin DOMContentLoaded
+    </script>
+
+</body>
+</html>
